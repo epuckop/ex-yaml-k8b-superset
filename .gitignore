@@ -81,10 +81,6 @@ celerybeat-schedule
 # Logs
 *.log
 
-# Kubernetes
-*.yaml
-*.yml
-
 # Superset
 superset_home/
 

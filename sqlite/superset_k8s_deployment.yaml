@@ -1,0 +1,213 @@
+# Create a namespace for Superset
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: superset
+
+
+---
+
+# Create PersistentVolumeClaims for Redis
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: superset
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+
+---
+
+# Create PersistentVolumeClaims for Superset
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: superset-pvc
+  namespace: superset
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+
+---
+
+# Create a ConfigMap for Superset configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: superset-config
+  namespace: superset
+  labels:
+    app: superset    
+  annotations:
+    description: Superset configuration file
+    notes: |
+      This ConfigMap contains the superset_config.py file for the Superset deployment.
+data:
+  superset_config.py: |
+    import os
+    MAPBOX_API_KEY = os.getenv("MAPBOX_API_KEY", "")
+    CACHE_CONFIG = {
+        "CACHE_TYPE": "RedisCache",
+        "CACHE_DEFAULT_TIMEOUT": 300,
+        "CACHE_KEY_PREFIX": "superset_",
+        "CACHE_REDIS_HOST": "redis",
+        "CACHE_REDIS_PORT": 6379,
+        "CACHE_REDIS_DB": 1,
+        "CACHE_REDIS_URL": "redis://redis:6379/1",
+    }
+    FILTER_STATE_CACHE_CONFIG = {**CACHE_CONFIG, "CACHE_KEY_PREFIX": "superset_filter_"}
+    EXPLORE_FORM_DATA_CACHE_CONFIG = {**CACHE_CONFIG, "CACHE_KEY_PREFIX": "superset_explore_form_"}
+    SQLALCHEMY_DATABASE_URI = "sqlite:////var/lib/superset/superset.db"
+    SQLALCHEMY_TRACK_MODIFICATIONS = True
+    SECRET_KEY = "thisISaSECRET_1234"
+
+
+---
+
+# Create a Deployment for Redis
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: superset
+spec:
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-pvc
+      containers:
+        - name: redis
+          image: redis
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+  
+
+
+---
+
+# Create a Service for Redis
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: superset
+spec:
+  selector:
+    app: redis
+  ports:
+    - protocol: TCP
+      port: 6379
+      targetPort: 6379
+
+
+---
+
+
+# Create a Secret for Superset configuration
+# Need to get it out from this config. not secure to store it in plain text.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: superset-secrets
+  namespace: superset
+type: Opaque
+data:
+  MAPBOX_API_KEY: "" # Need a key
+
+
+---
+
+# Create a Deployment for Superset
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: superset
+  namespace: superset
+spec:
+  selector:
+    matchLabels:
+      app: superset
+  template:
+    metadata:
+      labels:
+        app: superset
+    spec:
+      volumes:
+        - name: superset-config
+          configMap:
+            name: superset-config
+        - name: superset-data
+          persistentVolumeClaim:
+            claimName: superset-pvc
+      containers:
+        - name: superset
+          image: amancevice/superset
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "1"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
+          env:
+            - name: MAPBOX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: superset-secrets
+                  key: MAPBOX_API_KEY
+            - name: SUPERSET_HOME
+              value: /etc/superset
+          ports:
+            - containerPort: 8088
+          volumeMounts:
+            - name: superset-config
+              mountPath: /etc/superset/superset_config.py
+              subPath: superset_config.py
+            - name: superset-data
+              mountPath: /var/lib/superset
+      
+
+
+---
+
+# Create a Service for Superset
+apiVersion: v1
+kind: Service
+metadata:
+  name: superset
+  namespace: superset
+spec:
+  selector:
+    app: superset
+  ports:
+    - protocol: TCP
+      port: 8088
+      targetPort: 8088
+
+
+
